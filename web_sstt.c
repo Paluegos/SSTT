@@ -5,6 +5,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -61,6 +62,19 @@ void debug(int log_message_type, char *message, char *additional_info, int socke
 	if(log_message_type == ERROR || log_message_type == NOENCONTRADO || log_message_type == PROHIBIDO) exit(3);
 }
 
+void write_safe(int descriptorFichero, char* response) {
+	int bytesAEscribir = strlen(response);
+	int bytesEscritos = 0;
+	while (bytesAEscribir > 0) {
+		if ((bytesEscritos = write(descriptorFichero, response, bytesAEscribir)) == -1) {
+			debug(ERROR, "system call", "write", descriptorFichero);
+			free(message);
+			close(descriptorFichero);
+			exit(EXIT_FAILURE);
+		}
+		bytesAEscribir -= bytesEscritos;
+	}
+}
 
 
 
@@ -71,22 +85,24 @@ void process_web_request(int descriptorFichero)
 	// Definir buffer y variables necesarias para leer las peticiones
 	//
 	char mybuff[BUFSIZE];
-
+	int retval = 0;
 	//
 	// Leer la petición HTTP
 	//
 	int bytesLeidos;
-	if(bytesLeidos = read(descriptorFichero, mybuff, BUFSIZE) = -1)
+	if(bytesLeidos = read(descriptorFichero, mybuff, BUFSIZE) = -1) {
 		debug(ERROR,"system call","read",0);
 		close(descriptorFichero);	
-	if (bytesLeidos != BUFSIZE) 
+	}
+	if (bytesLeidos != BUFSIZE) {
 		while (!bytesLeidos) {
-			if((bytesLeidos = read(descriptorFichero, mybuff, BUFSIZE)) == -1)
+			if((bytesLeidos = read(descriptorFichero, mybuff, BUFSIZE)) == -1) {
 				debug(ERROR,"system call","read",0);
 				close(descriptorFichero);	
+			}
 		}
-	
-	
+	} 
+
 	//
 	// Si la lectura tiene datos válidos terminar el buffer con un \0
 	//
@@ -127,22 +143,76 @@ void process_web_request(int descriptorFichero)
 
 	if (!strcmp(method, "GET")) {
 		char response[BUFSIZE];
-		strcat(response, version);
-		strcat(response, " 200 OK\r\n\r\n");
-
-		strcat(response, "No me voy a comprar nada puto Jose");
-
-		int bytesAEscribir = strlen(response);
-		int bytesEscritos = 0;
-		while (bytesAEscribir > 0) {
-			if ((bytesEscritos = write(descriptorFichero, response, bytesAEscribir)) == -1) {
-				debug(ERROR, "system call", "write", descriptorFichero);
-				free(message);
-				close(descriptorFichero);
-				exit(EXIT_FAILURE);
-			}
-			bytesAEscribir -= bytesEscritos;
+		int bytesEscritos;
+		//Primera linea donde se muestra la version y la respuesta al mensaje
+		retval = snprintf(response, BUFSIZE, "%s 200 OK\r\n", version);
+		if (retval < 0) {
+			debug(ERROR, "function call","snrpintf",-1);
+			free(message);
+			close(descriptorFichero);
+			exit(EXIT_FAILURE);
+		} else {
+			bytesEscritos += retval;
 		}
+		//Segunda línea: apartado Date
+		time_t now = time(0);
+ 		struct tm tm = *gmtime(&now);
+  		retval = strftime(response + bytesEscritos, sizeof(response) - bytesEscritos, "%a, %d %b %Y %H:%M:%S %Z\r\n", &tm);
+  		bytesEscritos += retval;
+  		//Tercera línea: apartado Server
+  		retval = snprintf(response + bytesEscritos, BUFFSIZE - bytesEscritos, "Server: www.nomevoyacomprarna.es\r\n");
+		if (retval < 0) {
+			debug(ERROR, "function call","snrpintf",-1);
+			free(message);
+			close(descriptorFichero);
+			exit(EXIT_FAILURE);
+		} else {
+			bytesEscritos += retval;
+		}
+		//Cuarta línea: apartado Keep-alive
+  		retval = snprintf(response + bytesEscritos, BUFFSIZE - bytesEscritos, "Keep-Alive: timeout=3, max=0\r\n");
+		if (retval < 0) {
+			debug(ERROR, "function call","snrpintf",-1);
+			free(message);
+			close(descriptorFichero);
+			exit(EXIT_FAILURE);
+		} else {
+			bytesEscritos += retval;
+		}
+		//Quinta línea: apartado Connection
+		retval = snprintf(response + bytesEscritos, BUFFSIZE - bytesEscritos, "Connection: Keep-Alive\r\n");
+		if (retval < 0) {
+			debug(ERROR, "function call","snrpintf",-1);
+			free(message);
+			close(descriptorFichero);
+			exit(EXIT_FAILURE);
+		} else {
+			bytesEscritos += retval;
+		}
+		//Sexta línea: apartado Content-Type
+		retval = snprintf(response + bytesEscritos, BUFFSIZE - bytesEscritos, "Content-Type: text/html; charset=ISO-8859-1\r\n");
+		if (retval < 0) {
+			debug(ERROR, "function call","snrpintf",-1);
+			free(message);
+			close(descriptorFichero);
+			exit(EXIT_FAILURE);
+		} else {
+			bytesEscritos += retval;
+		}
+		//Séptima línea: apartado Content-Length
+		retval = snprintf(response + bytesEscritos, BUFFSIZE - bytesEscritos, "Content-Length: \r\n\r\n");
+		if (retval < 0) {
+			debug(ERROR, "function call","snrpintf",-1);
+			free(message);
+			close(descriptorFichero);
+			exit(EXIT_FAILURE);
+		} else {
+			bytesEscritos += retval;
+		}
+
+
+		//strcat(response, "No me voy a comprar nada puto Jose");
+		write_safe(descriptorFichero, response);
 
 	} else {
 
@@ -163,23 +233,22 @@ void process_web_request(int descriptorFichero)
 		exit(EXIT_FAILURE);
 	}
 
+	fd_set rfds;
+	struct timeval tv;
 
+	FD_ZERO(&rfds);
+	FD_SET(0, &rfds);
 
+	tv.tv_sec = 3;
+	tv.tv_usec = 0;
 
+	retval = select(1, &rfds, NULL, NULL, &tv);
 
+	if (retval) {
 
+	} else {
 
-
-
-
-
-
-
-
-
-
-
-
+	}
 
 
 	//
